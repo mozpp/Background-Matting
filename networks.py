@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
 import numpy as np
+import time
 
 
 class ResnetConditionHR(nn.Module):
@@ -89,12 +90,13 @@ class ResnetConditionHR(nn.Module):
 		
 
 	def forward(self, image,back,seg,multi):
+		time0=time.time()
 		img_feat1=self.model_enc1(image)
 		img_feat=self.model_enc2(img_feat1)
 
 		back_feat=self.model_enc_back(back)
 		seg_feat=self.model_enc_seg(seg)
-		multi_feat=self.model_enc_multi(multi)
+		# multi_feat=self.model_enc_multi(multi)
 
 		oth_feat=torch.cat([self.comb_back(torch.cat([img_feat,back_feat],dim=1)),self.comb_seg(torch.cat([img_feat,seg_feat],dim=1)),self.comb_multi(torch.cat([img_feat,back_feat],dim=1))],dim=1)
 
@@ -107,7 +109,8 @@ class ResnetConditionHR(nn.Module):
 		out_dec_fg1=self.model_dec_fg1(out_dec_fg)
 		fg_out=self.model_fg_out(torch.cat([out_dec_fg1,img_feat1],dim=1))
 
-
+		time1=time.time()
+		print('debug infer time', time1-time0)
 		return al_out, fg_out
 
 ############################## part ##################################

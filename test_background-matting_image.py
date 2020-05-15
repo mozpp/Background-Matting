@@ -61,6 +61,7 @@ netM.cuda();
 netM.eval()
 cudnn.benchmark = True
 reso = (512, 512)  # input reoslution to the network
+# reso = (256, 256)  # input reoslution to the network
 
 # load captured background for video mode, fixed camera
 if args.back is not None:
@@ -79,7 +80,7 @@ if not os.path.exists(result_path):
     os.makedirs(result_path)
 
 
-def modify_alpha(alpha_out0, data_path, filename, roi=608, soft_seg=None):
+def modify_alpha(alpha_out0, data_path=None, filename=None, roi=720, soft_seg=None):  # roi=608
     """
         mozi added. 基于深度值修改alpha。
         :param roi: 超参数，用于去除地面的深度值。
@@ -87,22 +88,24 @@ def modify_alpha(alpha_out0, data_path, filename, roi=608, soft_seg=None):
         :param data_path:
         :return:
     """
-    if soft_seg==None:
+    if soft_seg is None:
         depth_mask = cv2.imread(os.path.join(data_path, filename.replace('_img', '_masksDL')), 0)
-    depth_mask[roi/720*depth_mask.shape[0]:, ...] = 0
+    else:
+        depth_mask = soft_seg
+    depth_mask[int(roi / 720 * depth_mask.shape[0]):, ...] = 0
     # 腐蚀，膨胀，高斯滤波
     kernel = np.ones((3, 3), np.uint8)
-    # depth_mask = cv2.erode(depth_mask, kernel, iterations=1)
-    # depth_mask = cv2.dilate(depth_mask, kernel, iterations=1)
-    depth_mask = cv2.morphologyEx(depth_mask, cv2.MORPH_OPEN, kernel)
+    depth_mask = cv2.erode(depth_mask, kernel, iterations=2)  # 对于Astra，腐蚀iter=2；对于kinect，腐蚀iter=1
+    depth_mask = cv2.dilate(depth_mask, kernel, iterations=1)
+    # depth_mask = cv2.morphologyEx(depth_mask, cv2.MORPH_OPEN, kernel)
     depth_mask = cv2.GaussianBlur(depth_mask, (7, 7), 1)
 
     # depth_valid = np.zeros_like(depth_mask)
     # depth_valid[np.logical_and(1500 < depth_mask, depth_mask < 2700)] = 1
     # depth_valid[depth_mask > 1] = 1
 
-    alpha_out0= alpha_out0[...,np.newaxis]
-    depth_mask = depth_mask[...,np.newaxis]
+    alpha_out0 = alpha_out0[..., np.newaxis]
+    depth_mask = depth_mask[..., np.newaxis]
     merge = np.concatenate((alpha_out0, depth_mask), axis=2)
     alpha_out0 = np.max(merge, axis=2)
     # alpha_out0 = depth_mask/2+alpha_out0/2
@@ -110,6 +113,7 @@ def modify_alpha(alpha_out0, data_path, filename, roi=608, soft_seg=None):
 
 
 for i in range(0, len(test_imgs)):
+    time0 = time.time()
     filename = test_imgs[i]
     # original image
     bgr_img = cv2.imread(os.path.join(data_path, filename));
@@ -155,6 +159,9 @@ for i in range(0, len(test_imgs)):
         multi_fr_w[..., 2] = multi_fr_w[..., 0]
         multi_fr_w[..., 3] = multi_fr_w[..., 0]
 
+    time1 = time.time()
+    print('read', time1-time0)
+
     # crop tightly
     bgr_img0 = bgr_img;
     bbox = get_bbox(rcnn, R=bgr_img0.shape[0], C=bgr_img0.shape[1])
@@ -168,6 +175,9 @@ for i in range(0, len(test_imgs)):
     back_img1 = crop_list[3];
     back_img2 = crop_list[4];
     multi_fr = crop_list[5]
+
+    time2=time.time()
+    print('crop', time2-time1)
 
     # process segmentation mask
     kernel_er = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
@@ -189,6 +199,9 @@ for i in range(0, len(test_imgs)):
     rcnn = (255 * rcnn).astype(np.uint8)
     rcnn = np.delete(rcnn, range(reso[0], reso[0] + K), 0)
 
+    time3 = time.time()
+    print('process segmentation mask', time3-time2)
+
     # convert to torch
     img = torch.from_numpy(bgr_img.transpose((2, 0, 1))).unsqueeze(0);
     img = 2 * img.float().div(255) - 1
@@ -199,30 +212,49 @@ for i in range(0, len(test_imgs)):
     multi_fr = torch.from_numpy(multi_fr.transpose((2, 0, 1))).unsqueeze(0);
     multi_fr = 2 * multi_fr.float().div(255) - 1
 
+    time4 = time.time()
+    print('convert to torch', time4 - time3)
+
     with torch.no_grad():
+
         img, bg, rcnn_al, multi_fr = Variable(img.cuda()), Variable(bg.cuda()), Variable(rcnn_al.cuda()), Variable(
             multi_fr.cuda())
         input_im = torch.cat([img, bg, rcnn_al, multi_fr], dim=1)
-
+        time_bf_infer = time.time()
         alpha_pred, fg_pred_tmp = netM(img, bg, rcnn_al, multi_fr)
+
+        time5 = time.time()
+        print('infer', time5 - time_bf_infer)
+        del time5,time_bf_infer
+        # if i==0:
+        #     from thop import profile
+        #     flops, params = profile(netM.module, inputs=(img, bg, rcnn_al, multi_fr))
+        #     print("%.2fG" % (flops/1e9), "%.2fM" % (params/1e6))
+        #     torch.onnx.export(netM.module, (img, bg, rcnn_al, multi_fr),'./model.onnx', opset_version=11)
 
         al_mask = (alpha_pred > 0.95).type(torch.cuda.FloatTensor)
 
         # for regions with alpha>0.95, simply use the image as fg
         fg_pred = img * al_mask + fg_pred_tmp * (1 - al_mask)
-
+        time51 = time.time()
         alpha_out = to_image(alpha_pred[0, ...]);
-
+        time52 = time.time()
+        print('debug1', time52 - time51)
         # refine alpha with connected component
         labels = label((alpha_out > 0.05).astype(int))
         try:
             assert (labels.max() != 0)
         except:
             continue
+        time53 = time.time()
+        print('debug2', time53 - time52)
+        del time52, time51
         largestCC = labels == np.argmax(np.bincount(labels.flat)[1:]) + 1
         alpha_out = alpha_out * largestCC
 
         alpha_out = (255 * alpha_out[..., 0]).astype(np.uint8)
+
+        alpha_out = modify_alpha(alpha_out, soft_seg=soft_seg)
 
         fg_out = to_image(fg_pred[0, ...]);
         fg_out = fg_out * np.expand_dims((alpha_out.astype(float) / 255 > 0.01).astype(float), axis=2);
@@ -234,12 +266,16 @@ for i in range(0, len(test_imgs)):
         alpha_out0 = uncrop(alpha_out, bbox, R0, C0)
         fg_out0 = uncrop(fg_out, bbox, R0, C0)
 
-    # alpha_out0 = modify_alpha(alpha_out0, data_path, filename)  # todo:modify_alpha放在fg_out=fg*alpha之前
+    time_bf_compose=time.time()
     # compose
     back_img10 = cv2.resize(back_img10, (C0, R0));
     back_img20 = cv2.resize(back_img20, (C0, R0))
     comp_im_tr1 = composite4(fg_out0, back_img10, alpha_out0)
     comp_im_tr2 = composite4(fg_out0, back_img20, alpha_out0)
+
+    time6 = time.time()
+    print('compose', time6 - time_bf_compose)
+    # print('后处理', time6 - time5)
 
     cv2.imwrite(result_path + '/' + filename.replace('_img', '_out'), alpha_out0)
     cv2.imwrite(result_path + '/' + filename.replace('_img', '_fg'), cv2.cvtColor(fg_out0, cv2.COLOR_BGR2RGB))
@@ -247,4 +283,5 @@ for i in range(0, len(test_imgs)):
     cv2.imwrite(result_path + '/' + filename.replace('_img', '_matte').format(i),
                 cv2.cvtColor(comp_im_tr2, cv2.COLOR_BGR2RGB))
 
+    print("total time:", time6 - time0)
     print('Done: ' + str(i + 1) + '/' + str(len(test_imgs)))
