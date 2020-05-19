@@ -18,7 +18,7 @@ from loss_functions import alpha_loss, compose_loss, alpha_gradient_loss, GANlos
 
 # CUDA
 
-os.environ["CUDA_VISIBLE_DEVICES"]="0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 print('CUDA Device: ' + os.environ["CUDA_VISIBLE_DEVICES"])
 
 """Parses arguments."""
@@ -41,11 +41,12 @@ parser.add_argument('-n_blocks2_s', '--n_blocks2_s', type=int, default=1,
 args = parser.parse_args()
 
 ##Directories
-tb_dir = 'TB_Summary/' + args.name
+localtime = time.asctime(time.localtime(time.time()))
+tb_dir = os.path.join('TB_Summary/', args.name + '_' + localtime)
 model_dir = os.path.join('Models/', args.name)
 
 if not os.path.exists(model_dir):
-    os.makedirs(model_dir)
+    os.mkdir(model_dir)
 
 if not os.path.exists(tb_dir):
     os.makedirs(tb_dir)
@@ -64,7 +65,7 @@ def collate_filter_none(batch):
 
 # Original Data
 traindata = CompositeData(csv_file='Data_adobe/Adobe_train_data.csv', data_config=data_config_train,
-                      transform=None)  # Write a dataloader function that can read the database provided by .csv file
+                          transform=None)  # Write a dataloader function that can read the database provided by .csv file
 train_loader = torch.utils.data.DataLoader(traindata, batch_size=args.batch_size, shuffle=True,
                                            num_workers=args.batch_size, collate_fn=collate_filter_none)
 
@@ -138,7 +139,7 @@ for epoch in range(0, args.epoch):
         ## Train Generator
 
         alpha_pred = netG(image, bg, seg, place_holder)
-        fg_pred = fg*alpha_pred
+        fg_pred = fg * alpha_pred
 
         ##pseudo-supervised losses
         al_loss = l1_loss(alpha_pred_sup, alpha_pred, mask0) + 0.5 * g_loss(alpha_pred_sup, alpha_pred, mask0)
@@ -162,12 +163,22 @@ for epoch in range(0, args.epoch):
         # print('debug', seg.max())
         image_sh = compose_image_withshift(alpha_pred, image * al_mask + fg_pred * (1 - al_mask), bg_sh, seg)
         # print('debug', image_sh.shape)
-        if i==0:
+        if i == 0:
             print('debug img save')
             # image_sh[0,...].numpy()
-            image_sh_np = to_image(image_sh[0,...])
+            image_sh_np = to_image(image_sh[0, ...])
             image_sh_np = (255 * image_sh_np).astype(np.uint8)
-            cv2.imwrite('debug_{}.jpg'.format(epoch), image_sh_np)
+            cv2.imwrite('result/debug_image_sh_{}.jpg'.format(epoch), cv2.cvtColor(image_sh_np, cv2.COLOR_BGR2RGB))
+            image_np = to_image(image[0, ...])
+            image_np = (255 * image_np).astype(np.uint8)
+            cv2.imwrite('result/debug_image_{}.jpg'.format(epoch), cv2.cvtColor(image_np, cv2.COLOR_BGR2RGB))
+            seg_np = to_image(seg[0, ...])
+            seg_np = (255 * seg_np).astype(np.uint8)
+            cv2.imwrite('result/debug_seg_{}.jpg'.format(epoch), seg_np)
+            fg_pred_mask = mask*fg_pred_sup
+            fg_pred_sup_np = to_image(fg_pred_mask[0, ...])
+            fg_pred_sup_np = (255 * fg_pred_sup_np).astype(np.uint8)
+            cv2.imwrite('result/debug_fg_pred_sup_np_{}.jpg'.format(epoch), cv2.cvtColor(fg_pred_sup_np, cv2.COLOR_BGR2RGB))
 
         fake_response = netD(image_sh)
 
@@ -247,10 +258,10 @@ for epoch in range(0, args.epoch):
         del mask, back_rnd, mask0, seg_gt, mask1, bg, alpha_pred, alpha_pred_sup, image, fg_pred_sup, fg_pred, seg, image_sh, bg_sh, fake_response, real_response, al_loss, fg_loss, comp_loss, lossG, lossD, loss_ganD_real, loss_ganD_fake, loss_ganG
 
     if (epoch % 2 == 0):
-        torch.save(netG.state_dict(), model_dir + 'netG_epoch_%d.pth' % (epoch))
-        torch.save(optimizerG.state_dict(), model_dir + 'optimG_epoch_%d.pth' % (epoch))
-        torch.save(netD.state_dict(), model_dir + 'netD_epoch_%d.pth' % (epoch))
-        torch.save(optimizerD.state_dict(), model_dir + 'optimD_epoch_%d.pth' % (epoch))
+        torch.save(netG.state_dict(), model_dir + '/netG_epoch_%d.pth' % (epoch))
+        torch.save(optimizerG.state_dict(), model_dir + '/optimG_epoch_%d.pth' % (epoch))
+        torch.save(netD.state_dict(), model_dir + '/netD_epoch_%d.pth' % (epoch))
+        torch.save(optimizerD.state_dict(), model_dir + '/optimD_epoch_%d.pth' % (epoch))
 
         # Change weight every 2 epoch to put more stress on discriminator weight and less on pseudo-supervision
         wt = wt / 2

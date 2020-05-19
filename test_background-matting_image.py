@@ -159,8 +159,8 @@ for i in range(0, len(test_imgs)):
         multi_fr_w[..., 2] = multi_fr_w[..., 0]
         multi_fr_w[..., 3] = multi_fr_w[..., 0]
 
-    # time1 = time.time()
-    # print('read', time1-time0)
+    time1 = time.time()
+    print('read', time1-time0)
 
     # crop tightly
     bgr_img0 = bgr_img;
@@ -176,8 +176,8 @@ for i in range(0, len(test_imgs)):
     back_img2 = crop_list[4];
     multi_fr = crop_list[5]
 
-    # time2=time.time()
-    # print('crop', time2-time1)
+    time2=time.time()
+    print('crop', time2-time1)
 
     # process segmentation mask
     kernel_er = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
@@ -199,8 +199,8 @@ for i in range(0, len(test_imgs)):
     rcnn = (255 * rcnn).astype(np.uint8)
     rcnn = np.delete(rcnn, range(reso[0], reso[0] + K), 0)
 
-    # time3 = time.time()
-    # print('process segmentation mask', time3-time2)
+    time3 = time.time()
+    print('process segmentation mask', time3-time2)
 
     # convert to torch
     img = torch.from_numpy(bgr_img.transpose((2, 0, 1))).unsqueeze(0);
@@ -212,8 +212,8 @@ for i in range(0, len(test_imgs)):
     multi_fr = torch.from_numpy(multi_fr.transpose((2, 0, 1))).unsqueeze(0);
     multi_fr = 2 * multi_fr.float().div(255) - 1
 
-    # time4 = time.time()
-    # print('convert to torch', time4 - time3)
+    time4 = time.time()
+    print('convert to torch', time4 - time3)
 
     with torch.no_grad():
 
@@ -222,10 +222,10 @@ for i in range(0, len(test_imgs)):
         input_im = torch.cat([img, bg, rcnn_al, multi_fr], dim=1)
         time_bf_infer = time.time()
         alpha_pred, fg_pred_tmp = netM(img, bg, rcnn_al, multi_fr)
-        torch.cuda.synchronize()
-        # time5 = time.time()
-        # print('infer', time5 - time_bf_infer)
-        # del time5,time_bf_infer
+
+        time5 = time.time()
+        print('infer', time5 - time_bf_infer)
+        del time5,time_bf_infer
         # if i==0:
         #     from thop import profile
         #     flops, params = profile(netM.module, inputs=(img, bg, rcnn_al, multi_fr))
@@ -236,19 +236,19 @@ for i in range(0, len(test_imgs)):
 
         # for regions with alpha>0.95, simply use the image as fg
         fg_pred = img * al_mask + fg_pred_tmp * (1 - al_mask)
-        # time51 = time.time()
+        time51 = time.time()
         alpha_out = to_image(alpha_pred[0, ...]);
-        # time52 = time.time()
-        # print('debug1', time52 - time51)
+        time52 = time.time()
+        print('debug1', time52 - time51)
         # refine alpha with connected component
         labels = label((alpha_out > 0.05).astype(int))
         try:
             assert (labels.max() != 0)
         except:
             continue
-        # time53 = time.time()
-        # print('debug2', time53 - time52)
-        # del time52, time51
+        time53 = time.time()
+        print('debug2', time53 - time52)
+        del time52, time51
         largestCC = labels == np.argmax(np.bincount(labels.flat)[1:]) + 1
         alpha_out = alpha_out * largestCC
 
@@ -266,7 +266,7 @@ for i in range(0, len(test_imgs)):
         alpha_out0 = uncrop(alpha_out, bbox, R0, C0)
         fg_out0 = uncrop(fg_out, bbox, R0, C0)
 
-    # time_bf_compose=time.time()
+    time_bf_compose=time.time()
     # compose
     back_img10 = cv2.resize(back_img10, (C0, R0));
     back_img20 = cv2.resize(back_img20, (C0, R0))
@@ -274,7 +274,7 @@ for i in range(0, len(test_imgs)):
     comp_im_tr2 = composite4(fg_out0, back_img20, alpha_out0)
 
     time6 = time.time()
-    # print('compose', time6 - time_bf_compose)
+    print('compose', time6 - time_bf_compose)
     # print('后处理', time6 - time5)
 
     cv2.imwrite(result_path + '/' + filename.replace('_img', '_out'), alpha_out0)
