@@ -108,7 +108,7 @@ Note: `syn-comp-adobe-trainset` model was trained on the training set of the Ado
 
 Light-weight model [baidu drive](https://pan.baidu.com/s/1gknwN3I2Nwjgpf538hbpgA)(提取码: y8s9), download and place in any path you want.
 
-Currently, the performance of my Light-weight model is weak.
+Note: Currently, the performance of my Light-weight model is weak.
 
 ### Pre-processing
 
