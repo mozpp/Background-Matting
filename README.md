@@ -106,6 +106,9 @@ Please download the pre-trained models from [Google Drive](https://drive.google.
 
 Note: `syn-comp-adobe-trainset` model was trained on the training set of the Adobe dataset. This was the model used for numerical evaluation on Adobe dataset.
 
+Light-weight model [baidu drive](https://pan.baidu.com/s/1gknwN3I2Nwjgpf538hbpgA)(提取码: y8s9), download and place in any path you want.
+
+Currently, the performance of my Light-weight model is weak.
 
 ### Pre-processing
 
@@ -199,6 +202,12 @@ For fixed-camera videos, like `sample_video_fixed`:
 
 ```bash
 python test_background-matting_image.py -m real-fixed-cam -i sample_video_fixed/input/ -o sample_video_fixed/output/ -tb sample_video_fixed/background/ -b sample_video_fixed/teaser_back.png
+```
+
+For fast inference with light-weight model:
+
+```bash
+python test_bg-matting_mo.py -m {path-of-lightweight-model} -i sample_video_fixed/input/ -o sample_video_fixed/output/ -tb sample_video_fixed/background/ -b sample_video_fixed/teaser_back.png
 ```
 
 To obtain the video from the output frames, run:
