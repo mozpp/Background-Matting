@@ -24,6 +24,7 @@ import logging
 import math
 from multiprocessing.pool import ThreadPool
 import threading
+import numpy as np
 
 parser = argparse.ArgumentParser(description='compose backgrounds and foregrounds')
 
@@ -60,7 +61,13 @@ def process_foreground_image(i, job):
 
     im_name = im_name.replace(fg_path, '')
     im = Image.open(os.path.join(fg_path, im_name))
-    al = Image.open(os.path.join(a_path, im_name))
+    if os.path.exists(os.path.join(a_path, im_name)):
+        al = Image.open(os.path.join(a_path, im_name))
+    else:
+        al_im_name = im_name.replace('.jpg', '.png')
+        al = Image.open(os.path.join(a_path, al_im_name))
+        al = Image.fromarray(np.array(al)*255)
+
     bbox = im.size
     w = bbox[0]
     h = bbox[1]
@@ -99,7 +106,8 @@ def process_foreground_image(i, job):
             line = os.path.join(fixpath(fg_path), im_name) + ';' + os.path.join(fixpath(a_path), im_name) + ';' + fixpath(out_name) + ';' + fixpath(back_name) + '\n'
             output_lines.append(line)
         except Exception as e:
-            logging.error(f"Composing {im_name} onto {bg_name} failed! Skipping. Error: %s" % e)
+            # logging.error("Composing %s onto %s failed! Skipping. Error: %s" % im_name, bg_name, e)
+            print("Composing %s onto %s failed! Skipping. Error: %s" % im_name, bg_name, e)
         with lock:
             pbar.update()
     with lock:

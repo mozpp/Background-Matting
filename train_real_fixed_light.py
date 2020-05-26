@@ -11,7 +11,7 @@ import time
 import argparse
 import numpy as np
 
-from data_loader import CompositeData
+from data_loader import CompositeData, RealDataWoMotion
 from functions import *
 from networks import ResnetConditionHR, MultiscaleDiscriminator, conv_init, ResnetConditionHR_mo
 from loss_functions import alpha_loss, compose_loss, alpha_gradient_loss, GANloss
@@ -33,23 +33,29 @@ parser.add_argument('-n_blocks1_t', '--n_blocks1_t', type=int, default=7,
                     help='in teacher model, Number of residual blocks after Context Switching.')
 parser.add_argument('-n_blocks2_t', '--n_blocks2_t', type=int, default=3,
                     help='in teacher model, Number of residual blocks for Fg and alpha each.')
-parser.add_argument('-n_blocks1_s', '--n_blocks1_s', type=int, default=3,
+parser.add_argument('-n_blocks1_s', '--n_blocks1_s', type=int, default=7,
                     help='in student model, Number of residual blocks after Context Switching.')
-parser.add_argument('-n_blocks2_s', '--n_blocks2_s', type=int, default=1,
+parser.add_argument('-n_blocks2_s', '--n_blocks2_s', type=int, default=3,
                     help='in student model, Number of residual blocks for Fg and alpha each.')
 
 args = parser.parse_args()
+
+debug = False
 
 ##Directories
 localtime = time.asctime(time.localtime(time.time()))
 tb_dir = os.path.join('TB_Summary/', args.name + '_' + localtime)
 model_dir = os.path.join('Models/', args.name)
+result_dir = os.path.join('result',args.name)
 
 if not os.path.exists(model_dir):
     os.mkdir(model_dir)
 
 if not os.path.exists(tb_dir):
     os.makedirs(tb_dir)
+
+if not os.path.exists(result_dir):
+    os.mkdir(result_dir)
 
 ## Input list
 data_config_train = {'reso': (args.reso, args.reso)}  # if trimap is true, rcnn is used
@@ -64,7 +70,7 @@ def collate_filter_none(batch):
 
 
 # Original Data
-traindata = CompositeData(csv_file='Data_adobe/Adobe_train_data.csv', data_config=data_config_train,
+traindata = RealDataWoMotion(csv_file='tool/rgbd.csv', data_config=data_config_train,
                           transform=None)  # Write a dataloader function that can read the database provided by .csv file
 train_loader = torch.utils.data.DataLoader(traindata, batch_size=args.batch_size, shuffle=True,
                                            num_workers=args.batch_size, collate_fn=collate_filter_none)
@@ -79,7 +85,7 @@ netB.eval()
 for param in netB.parameters():  # freeze netD
     param.requires_grad = False
 
-netG = ResnetConditionHR_mo(input_nc=(3, 3, 1, 4), output_nc=4, n_blocks1=args.n_blocks1_s, n_blocks2=args.n_blocks2_s)
+netG = ResnetConditionHR(input_nc=(3, 3, 1, 4), output_nc=4, n_blocks1=args.n_blocks1_s, n_blocks2=args.n_blocks2_s)
 netG.apply(conv_init)
 netG = nn.DataParallel(netG)
 netG.cuda()
@@ -119,11 +125,11 @@ for epoch in range(0, args.epoch):
     for i, data in enumerate(train_loader):
         # Initiating
 
-        bg, image, seg, seg_gt, back_rnd, fg = data['bg'], data['image'], data['seg'], data[
-            'seg-gt'], data['back-rnd'], data['fg']
+        bg, image, seg, seg_gt, back_rnd = data['bg'], data['image'], data['seg'], data[
+            'seg-gt'], data['back-rnd']
 
-        bg, image, seg, seg_gt, back_rnd, fg = Variable(bg.cuda()), Variable(image.cuda()), Variable(
-            seg.cuda()), Variable(seg_gt.cuda()), Variable(back_rnd.cuda()), Variable(fg.cuda())
+        bg, image, seg, seg_gt, back_rnd = Variable(bg.cuda()), Variable(image.cuda()), Variable(
+            seg.cuda()), Variable(seg_gt.cuda()), Variable(back_rnd.cuda())
 
         mask0 = Variable(torch.ones(seg.shape).cuda())
 
@@ -138,8 +144,8 @@ for epoch in range(0, args.epoch):
 
         ## Train Generator
 
-        alpha_pred = netG(image, bg, seg, place_holder)
-        fg_pred = fg * alpha_pred
+        alpha_pred, fg_pred = netG(image, bg, seg, place_holder)
+        # fg_pred = image * alpha_pred #todo:5.23消融实验,恢复fg-pred分支。
 
         ##pseudo-supervised losses
         al_loss = l1_loss(alpha_pred_sup, alpha_pred, mask0) + 0.5 * g_loss(alpha_pred_sup, alpha_pred, mask0)
@@ -163,22 +169,23 @@ for epoch in range(0, args.epoch):
         # print('debug', seg.max())
         image_sh = compose_image_withshift(alpha_pred, image * al_mask + fg_pred * (1 - al_mask), bg_sh, seg)
         # print('debug', image_sh.shape)
-        if i == 0:
-            print('debug img save')
+        if i == 10:
+            print('img save')
             # image_sh[0,...].numpy()
             image_sh_np = to_image(image_sh[0, ...])
             image_sh_np = (255 * image_sh_np).astype(np.uint8)
-            cv2.imwrite('result/debug_image_sh_{}.jpg'.format(epoch), cv2.cvtColor(image_sh_np, cv2.COLOR_BGR2RGB))
+            cv2.imwrite('{}/debug_image_sh_{}.jpg'.format(result_dir,epoch), cv2.cvtColor(image_sh_np, cv2.COLOR_BGR2RGB))
             image_np = to_image(image[0, ...])
             image_np = (255 * image_np).astype(np.uint8)
-            cv2.imwrite('result/debug_image_{}.jpg'.format(epoch), cv2.cvtColor(image_np, cv2.COLOR_BGR2RGB))
+            cv2.imwrite('{}/debug_image_{}.jpg'.format(result_dir,epoch), cv2.cvtColor(image_np, cv2.COLOR_BGR2RGB))
             seg_np = to_image(seg[0, ...])
             seg_np = (255 * seg_np).astype(np.uint8)
-            cv2.imwrite('result/debug_seg_{}.jpg'.format(epoch), seg_np)
-            fg_pred_mask = mask*fg_pred_sup
+            cv2.imwrite('{}/debug_seg_{}.jpg'.format(result_dir,epoch), seg_np)
+            fg_pred_mask = mask * fg_pred_sup
             fg_pred_sup_np = to_image(fg_pred_mask[0, ...])
             fg_pred_sup_np = (255 * fg_pred_sup_np).astype(np.uint8)
-            cv2.imwrite('result/debug_fg_pred_sup_np_{}.jpg'.format(epoch), cv2.cvtColor(fg_pred_sup_np, cv2.COLOR_BGR2RGB))
+            cv2.imwrite('{}/debug_fg_pred_sup_{}.jpg'.format(result_dir,epoch),
+                        cv2.cvtColor(fg_pred_sup_np, cv2.COLOR_BGR2RGB))
 
         fake_response = netD(image_sh)
 
@@ -195,6 +202,7 @@ for epoch in range(0, args.epoch):
 
         fake_response = netD(image_sh);
         real_response = netD(image)
+        # real_response = netD(fg)  # todo：5.19，当前image是合成数据，而fg是真实数据，所以用fg练判别器。
 
         loss_ganD_fake = GAN_loss(fake_response, label_type=False)
         loss_ganD_real = GAN_loss(real_response, label_type=True)
@@ -257,7 +265,7 @@ for epoch in range(0, args.epoch):
 
         del mask, back_rnd, mask0, seg_gt, mask1, bg, alpha_pred, alpha_pred_sup, image, fg_pred_sup, fg_pred, seg, image_sh, bg_sh, fake_response, real_response, al_loss, fg_loss, comp_loss, lossG, lossD, loss_ganD_real, loss_ganD_fake, loss_ganG
 
-    if (epoch % 2 == 0):
+    if (epoch % 2 == 0) and not debug:
         torch.save(netG.state_dict(), model_dir + '/netG_epoch_%d.pth' % (epoch))
         torch.save(optimizerG.state_dict(), model_dir + '/optimG_epoch_%d.pth' % (epoch))
         torch.save(netD.state_dict(), model_dir + '/netD_epoch_%d.pth' % (epoch))

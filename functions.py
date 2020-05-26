@@ -17,19 +17,25 @@ def compose_image_withshift(alpha_pred,fg_pred,bg,seg):
 
     for t in range(0,fg_pred.shape[0]):
         al_tmp=to_image(seg[t,...]).squeeze(2)
-        where = np.array(np.where((al_tmp>0.1).astype(np.float32)))
-        x1, y1 = np.amin(where, axis=1)
-        x2, y2 = np.amax(where, axis=1)
+        # print('debug', al_tmp.max())
+        if (al_tmp>0.1).max()<0.001:
+            image_sh[t, ...] = fg_pred[t, ...] * alpha_pred[t, ...] + (1 - alpha_pred[t, ...]) * bg[t, ...]
+        else:
+            where = np.array(np.where((al_tmp>0.1).astype(np.float32)))
+            x1, y1 = np.amin(where, axis=1)
+            x2, y2 = np.amax(where, axis=1)
 
-        #select shift
-        n=np.random.randint(-(y1-10),al_tmp.shape[1]-y2-10)
-        #n positive indicates shift to right
-        alpha_pred_sh=torch.cat((alpha_pred[t,:,:,-n:],alpha_pred[t,:,:,:-n]),dim=2)
-        fg_pred_sh=torch.cat((fg_pred[t,:,:,-n:],fg_pred[t,:,:,:-n]),dim=2)
+            #select shift
+            # print('debug',(y1,al_tmp.shape[1], y2))
+            rand_max = max(-(y1-10)+1,al_tmp.shape[1]-y2-10)
+            n=np.random.randint(-(y1-10), rand_max)
+            #n positive indicates shift to right
+            alpha_pred_sh=torch.cat((alpha_pred[t,:,:,-n:],alpha_pred[t,:,:,:-n]),dim=2)
+            fg_pred_sh=torch.cat((fg_pred[t,:,:,-n:],fg_pred[t,:,:,:-n]),dim=2)
 
-        alpha_pred_sh=(alpha_pred_sh+1)/2
+            alpha_pred_sh=(alpha_pred_sh+1)/2
 
-        image_sh[t,...]=fg_pred_sh*alpha_pred_sh + (1-alpha_pred_sh)*bg[t,...]
+            image_sh[t,...]=fg_pred_sh*alpha_pred_sh + (1-alpha_pred_sh)*bg[t,...]
 
     return torch.autograd.Variable(image_sh.cuda())
 

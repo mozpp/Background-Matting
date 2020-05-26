@@ -6,7 +6,6 @@
 *.heic
 *.JPG
 *.PNG
-*.png
 *.TIF
 *.HEIC
 *.mp4
@@ -16,6 +15,9 @@
 *.data
 *.json
 *.mkv
+*.pth
+*.pt
+*.csv
 
 *.cfg
 !cfg/yolov3*.cfg
@@ -249,3 +251,8 @@ fabric.properties
 detect_my.py
 /tool_mo.py
 /models/
+/deeplab_model/
+/TB_Summary/
+pre_process_mo.py
+prepare_real.py
+/tool/

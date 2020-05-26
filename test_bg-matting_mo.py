@@ -56,7 +56,7 @@ else:
 #     epoch_idx_max = epoch_idx if epoch_idx >= epoch_idx_max else epoch_idx_max
 # model_name1 = os.path.join(model_main_dir, 'netG_epoch_{}.pth'.format(epoch_idx_max))
 model_name1 = args.trained_model
-netM = ResnetConditionHR_mo(input_nc=(3, 3, 1, 4), output_nc=4, n_blocks1=3, n_blocks2=1)
+netM = ResnetConditionHR_mo(input_nc=(3, 3, 1, 4), output_nc=4, n_blocks1=7, n_blocks2=3)
 netM = nn.DataParallel(netM)
 netM.load_state_dict(torch.load(model_name1))
 netM.cuda();
