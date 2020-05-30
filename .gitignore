@@ -253,6 +253,5 @@ detect_my.py
 /models/
 /deeplab_model/
 /TB_Summary/
-pre_process_mo.py
 prepare_real.py
 /Data_adobe/
