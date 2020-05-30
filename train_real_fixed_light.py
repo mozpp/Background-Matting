@@ -18,7 +18,7 @@ from loss_functions import alpha_loss, compose_loss, alpha_gradient_loss, GANlos
 
 # CUDA
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = '0,1'
 print('CUDA Device: ' + os.environ["CUDA_VISIBLE_DEVICES"])
 
 """Parses arguments."""
@@ -33,9 +33,9 @@ parser.add_argument('-n_blocks1_t', '--n_blocks1_t', type=int, default=7,
                     help='in teacher model, Number of residual blocks after Context Switching.')
 parser.add_argument('-n_blocks2_t', '--n_blocks2_t', type=int, default=3,
                     help='in teacher model, Number of residual blocks for Fg and alpha each.')
-parser.add_argument('-n_blocks1_s', '--n_blocks1_s', type=int, default=7,
+parser.add_argument('-n_blocks1_s', '--n_blocks1_s', type=int, default=3,
                     help='in student model, Number of residual blocks after Context Switching.')
-parser.add_argument('-n_blocks2_s', '--n_blocks2_s', type=int, default=3,
+parser.add_argument('-n_blocks2_s', '--n_blocks2_s', type=int, default=1,
                     help='in student model, Number of residual blocks for Fg and alpha each.')
 
 args = parser.parse_args()

@@ -11,7 +11,7 @@ from torch.autograd import Variable
 import torch.backends.cudnn as cudnn
 
 from functions import *
-from networks import ResnetConditionHR_mo
+from networks import ResnetConditionHR_mo, ResnetConditionHR, ResnetConditionHR_mo_4convert
 
 torch.set_num_threads(1)
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
@@ -56,9 +56,10 @@ else:
 #     epoch_idx_max = epoch_idx if epoch_idx >= epoch_idx_max else epoch_idx_max
 # model_name1 = os.path.join(model_main_dir, 'netG_epoch_{}.pth'.format(epoch_idx_max))
 model_name1 = args.trained_model
-netM = ResnetConditionHR_mo(input_nc=(3, 3, 1, 4), output_nc=4, n_blocks1=7, n_blocks2=3)
+# netM = ResnetConditionHR_mo(input_nc=(3, 3, 1, 4), output_nc=4, n_blocks1=7, n_blocks2=3)
+netM = ResnetConditionHR_mo_4convert(input_nc=(3, 3, 1, 4), output_nc=4, n_blocks1=3, n_blocks2=1)
 netM = nn.DataParallel(netM)
-netM.load_state_dict(torch.load(model_name1))
+# netM.load_state_dict(torch.load(model_name1))
 netM.cuda();
 netM.eval()
 cudnn.benchmark = True
@@ -211,11 +212,11 @@ for i in range(0, len(test_imgs)):
         img, bg, rcnn_al, multi_fr = Variable(img.cuda()), Variable(bg.cuda()), Variable(rcnn_al.cuda()), Variable(
             multi_fr.cuda())
         input_im = torch.cat([img, bg, rcnn_al, multi_fr], dim=1)
-        # if i==0:
-        #     torch.onnx.export(netM.module, (img, bg, rcnn_al, multi_fr),'./model_lw.onnx', opset_version=11)
+        if i==0:
+            torch.onnx.export(netM.module, (img, bg, rcnn_al),'./model_lw1.onnx', opset_version=9)
         torch.cuda.synchronize()
         time_bf_infer = time.time()
-        alpha_pred = netM(img, bg, rcnn_al, multi_fr)
+        alpha_pred, fg_pred = netM(img, bg, rcnn_al)
         torch.cuda.synchronize()
         time_aft_infer = time.time()
         print('infer time:', time_aft_infer - time_bf_infer)
@@ -247,18 +248,21 @@ for i in range(0, len(test_imgs)):
 
         # alpha_out = modify_alpha(alpha_out, soft_seg=soft_seg)
 
-        # fg_out = to_image(fg_pred[0, ...]);
+        fg_out = to_image(fg_pred[0, ...]);
         # fg_out = fg_out * np.expand_dims((alpha_out.astype(float) / 255 > 0.01).astype(float), axis=2);
-        # fg_out = (255 * fg_out).astype(np.uint8)
+        fg_out = (255 * fg_out).astype(np.uint8)
 
         # Uncrop
         R0 = bgr_img0.shape[0];
         C0 = bgr_img0.shape[1]
         alpha_out0 = uncrop(alpha_out, bbox, R0, C0)
-        # fg_out0 = uncrop(fg_out, bbox, R0, C0)
+        fg_out0 = uncrop(fg_out, bbox, R0, C0)
 
     # compose
-    fg_out0=rgb_img
+    alpha_out_fp=alpha_out0.astype(float)/255
+    fg_out0=rgb_img*alpha_out_fp[..., np.newaxis]+fg_out0*(1-alpha_out_fp[..., np.newaxis])
+    # fg_out0 = rgb_img
+
     back_img10 = cv2.resize(back_img10, (C0, R0));
     back_img20 = cv2.resize(back_img20, (C0, R0))
     comp_im_tr1 = composite4(fg_out0, back_img10, alpha_out0)

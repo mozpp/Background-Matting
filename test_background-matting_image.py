@@ -31,6 +31,9 @@ parser.add_argument('-b', '--back', type=str, default=None,
 
 args = parser.parse_args()
 
+'''是否开启基于初始背景深度，切分alpha'''
+bg_mask_mode_on = False
+
 # input model
 model_main_dir = 'Models/' + args.trained_model + '/';
 # input data path
@@ -64,8 +67,8 @@ netM.load_state_dict(torch.load(model_name1))
 netM.cuda();
 netM.eval()
 cudnn.benchmark = True
-reso = (512, 512)  # input reoslution to the network
-# reso = (288, 288)  # input reoslution to the network
+# reso = (512, 512)  # input reoslution to the network
+reso = (480, 480)  # input reoslution to the network
 
 # load captured background for video mode, fixed camera
 if args.back is not None:
@@ -99,10 +102,10 @@ def modify_alpha(alpha_out0, bg_mask=None, data_path=None, filename=None, roi=72
     depth_mask[int(roi / 720 * depth_mask.shape[0]):, ...] = 0
     # 腐蚀，膨胀，高斯滤波
     kernel = np.ones((3, 3), np.uint8)
-    depth_mask = cv2.erode(depth_mask, kernel, iterations=5)  # 对于Astra，腐蚀iter=2；对于kinect，腐蚀iter=1
-    # depth_mask = cv2.dilate(depth_mask, kernel, iterations=1)
+    depth_mask = cv2.erode(depth_mask, kernel, iterations=4)  # 对于Astra，腐蚀iter=2；对于kinect，腐蚀iter=1
+    depth_mask = cv2.dilate(depth_mask, kernel, iterations=1)
     # depth_mask = cv2.morphologyEx(depth_mask, cv2.MORPH_OPEN, kernel)
-    depth_mask = cv2.GaussianBlur(depth_mask, (7, 7), 5)
+    depth_mask = cv2.GaussianBlur(depth_mask, (7, 7), 1)
 
     # depth_valid = np.zeros_like(depth_mask)
     # depth_valid[np.logical_and(1500 < depth_mask, depth_mask < 2700)] = 1
@@ -115,6 +118,7 @@ def modify_alpha(alpha_out0, bg_mask=None, data_path=None, filename=None, roi=72
     # alpha_out0 = depth_mask/2+alpha_out0/2
 
     if bg_mask is not None:
+        print('sub background')
         depth_bg_mask = 255 - bg_mask
         depth_bg_mask = cv2.dilate(depth_bg_mask, kernel, iterations=2)
         alpha_out0 = alpha_out0 * (depth_bg_mask / 255)
@@ -147,9 +151,10 @@ def modify_alpha_wbg(alpha_out0, data_path=None, filename=None, roi=720, soft_se
     # depth_bg_mask = depth_bg_mask[..., np.newaxis]
     # merge = np.concatenate((alpha_out0, depth_bg_mask), axis=2)
     # alpha_out0 = np.max(merge, axis=2)
-    alpha_out0 = alpha_out0 * (depth_bg_mask/255)
+    alpha_out0 = alpha_out0 * (depth_bg_mask / 255)
 
     return alpha_out0
+
 
 for i in range(0, len(test_imgs)):
     time0 = time.time()
@@ -164,10 +169,16 @@ for i in range(0, len(test_imgs)):
         bg_im0 = cv2.cvtColor(bg_im0, cv2.COLOR_BGR2RGB);
 
     # segmentation mask
-    rcnn = cv2.imread(os.path.join(data_path, filename.replace('_img', '_masksDL')), 0);
+    rcnn_ = cv2.imread(os.path.join(data_path, filename.replace('_img', '_masksDL')), -1)
 
+    if bg_mask_mode_on:
+        assert rcnn_.ndim == 3
+        rcnn = rcnn_[..., 0]
+        bg_mask = rcnn_[..., 1]
+    else:
+        rcnn = rcnn_
     # background mask
-    bg_mask = cv2.imread(os.path.join(data_path, filename.replace('_img', '_masksBG')), 0)
+    # bg_mask = cv2.imread(os.path.join(data_path, filename.replace('_img', '_masksBG')), 0)
 
     if args.video:  # if video mode, load target background frames
         # target background path
@@ -206,9 +217,16 @@ for i in range(0, len(test_imgs)):
 
     # crop tightly
     bgr_img0 = bgr_img;
-    bbox = get_bbox(rcnn, R=bgr_img0.shape[0], C=bgr_img0.shape[1])
+    try:
+        bbox = get_bbox(rcnn, R=bgr_img0.shape[0], C=bgr_img0.shape[1])
+    except:
+        print('fail to get bbox,maybe no object')
+        continue
 
-    crop_list = [bgr_img, bg_im0, rcnn, back_img10, back_img20, multi_fr_w, bg_mask]
+    if bg_mask_mode_on:
+        crop_list = [bgr_img, bg_im0, rcnn, back_img10, back_img20, multi_fr_w, bg_mask]
+    else:
+        crop_list = [bgr_img, bg_im0, rcnn, back_img10, back_img20, multi_fr_w]
     crop_list = crop_images(crop_list, reso, bbox)
     bgr_img = crop_list[0];
     bg_im = crop_list[1];
@@ -217,7 +235,8 @@ for i in range(0, len(test_imgs)):
     back_img1 = crop_list[3];
     back_img2 = crop_list[4];
     multi_fr = crop_list[5]
-    bg_mask = crop_list[6]
+    if bg_mask_mode_on:
+        bg_mask = crop_list[6]
 
     # time2=time.time()
     # print('crop', time2-time1)
@@ -297,6 +316,8 @@ for i in range(0, len(test_imgs)):
 
         alpha_out = (255 * alpha_out[..., 0]).astype(np.uint8)
 
+        if not bg_mask_mode_on:
+            bg_mask = None
         alpha_out = modify_alpha(alpha_out, bg_mask=bg_mask, soft_seg=soft_seg)
         # alpha_out = modify_alpha(alpha_out, data_path=data_path, filename=filename)
 

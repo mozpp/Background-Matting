@@ -274,6 +274,146 @@ class ResnetConditionHR_mo(nn.Module):
         return al_out
 
 
+class ResnetConditionHR_mo_4convert(nn.Module):
+    '''
+    专门为转模型测试用，把upsample换成反卷积。把reflection padding换成zeropadding。把Tanh去掉。
+    '''
+
+    def __init__(self, input_nc, output_nc, ngf=64, nf_part=64, norm_layer=nn.BatchNorm2d, use_dropout=False,
+                 n_blocks1=7, n_blocks2=3, padding_type='zero'):  # padding_type='reflect', 'zero'
+        assert (n_blocks1 >= 0);
+        assert (n_blocks2 >= 0)
+        super(ResnetConditionHR_mo_4convert, self).__init__()
+        self.input_nc = input_nc
+        self.output_nc = output_nc
+        self.ngf = ngf
+        use_bias = True
+
+        # main encoder output 256xW/4xH/4
+        model_enc1 = [nn.Conv2d(input_nc[0], ngf, kernel_size=7, padding=3, bias=use_bias),
+                      norm_layer(ngf), nn.ReLU(True)]
+        model_enc1 += [nn.Conv2d(ngf, ngf * 2, kernel_size=3, stride=2, padding=1, bias=use_bias), norm_layer(ngf * 2),
+                       nn.ReLU(True)]
+        model_enc2 = [nn.Conv2d(ngf * 2, ngf * 4, kernel_size=3, stride=2, padding=1, bias=use_bias),
+                      norm_layer(ngf * 4), nn.ReLU(True)]
+
+        # back encoder output 256xW/4xH/4
+        model_enc_back = [nn.Conv2d(input_nc[1], ngf, kernel_size=7, padding=3, bias=use_bias),
+                          norm_layer(ngf), nn.ReLU(True)]
+        n_downsampling = 2
+        for i in range(n_downsampling):
+            mult = 2 ** i
+            model_enc_back += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3, stride=2, padding=1, bias=use_bias),
+                               norm_layer(ngf * mult * 2), nn.ReLU(True)]
+
+        # seg encoder output 256xW/4xH/4
+        model_enc_seg = [nn.Conv2d(input_nc[2], ngf, kernel_size=7, padding=3, bias=use_bias),
+                         norm_layer(ngf), nn.ReLU(True)]
+        n_downsampling = 2
+        for i in range(n_downsampling):
+            mult = 2 ** i
+            model_enc_seg += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3, stride=2, padding=1, bias=use_bias),
+                              norm_layer(ngf * mult * 2), nn.ReLU(True)]
+
+        mult = 2 ** n_downsampling
+
+        # #motion encoder output 256xW/4xH/4
+        model_enc_multi = [nn.Conv2d(input_nc[3], ngf, kernel_size=7, padding=3, bias=use_bias),
+                           norm_layer(ngf), nn.ReLU(True)]
+        n_downsampling = 2
+        for i in range(n_downsampling):
+            mult = 2 ** i
+            model_enc_multi += [
+                nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3, stride=2, padding=1, bias=use_bias),
+                norm_layer(ngf * mult * 2), nn.ReLU(True)]
+
+        self.model_enc1 = nn.Sequential(*model_enc1)
+        self.model_enc2 = nn.Sequential(*model_enc2)
+        self.model_enc_back = nn.Sequential(*model_enc_back)
+        self.model_enc_seg = nn.Sequential(*model_enc_seg)
+        self.model_enc_multi = nn.Sequential(*model_enc_multi)
+
+        mult = 2 ** n_downsampling
+        self.comb_back = nn.Sequential(
+            nn.Conv2d(ngf * mult * 2, nf_part, kernel_size=1, stride=1, padding=0, bias=False), norm_layer(ngf),
+            nn.ReLU(True))
+        self.comb_seg = nn.Sequential(
+            nn.Conv2d(ngf * mult * 2, nf_part, kernel_size=1, stride=1, padding=0, bias=False), norm_layer(ngf),
+            nn.ReLU(True))
+        self.comb_multi = nn.Sequential(
+            nn.Conv2d(ngf * mult * 2, nf_part, kernel_size=1, stride=1, padding=0, bias=False), norm_layer(ngf),
+            nn.ReLU(True))
+
+        # decoder
+        model_res_dec = [
+            nn.Conv2d(ngf * mult + 2 * nf_part, ngf * mult, kernel_size=1, stride=1, padding=0, bias=False),
+            norm_layer(ngf * mult), nn.ReLU(True)]
+        for i in range(n_blocks1):
+            model_res_dec += [
+                ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout,
+                            use_bias=use_bias)]
+
+        model_res_dec_al = []
+        for i in range(n_blocks2):
+            model_res_dec_al += [
+                ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout,
+                            use_bias=use_bias)]
+
+        model_res_dec_fg = []
+        for i in range(n_blocks2):
+            model_res_dec_fg += [
+                ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout,
+                            use_bias=use_bias)]
+
+        model_dec_al = []
+        for i in range(n_downsampling):
+            mult = 2 ** (n_downsampling - i)
+            model_dec_al += [nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2), kernel_size=3, stride=2, padding=1,
+                                                output_padding=1, bias=use_bias), norm_layer(int(ngf * mult / 2)),
+                             nn.ReLU(True)]
+            # model_dec_al += [f_upsample(scale_factor=2, mode='bilinear', align_corners=None),
+            #                  nn.Conv2d(ngf * mult, int(ngf * mult / 2), 3, stride=1, padding=1),
+            #                  norm_layer(int(ngf * mult / 2)), nn.ReLU(True)]
+        model_dec_al += [nn.Conv2d(ngf, 1, kernel_size=7, padding=3)]  # nn.Tanh()
+
+        model_dec_fg1 = [nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
+                         nn.Conv2d(ngf * 4, int(ngf * 2), 3, stride=1, padding=1), norm_layer(int(ngf * 2)),
+                         nn.ReLU(True)]
+        model_dec_fg2 = [nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
+                         nn.Conv2d(ngf * 4, ngf, 3, stride=1, padding=1), norm_layer(ngf), nn.ReLU(True),
+                         nn.Conv2d(ngf, output_nc - 1, kernel_size=7, padding=3)]
+
+        self.model_res_dec = nn.Sequential(*model_res_dec)
+        self.model_res_dec_al = nn.Sequential(*model_res_dec_al)
+        self.model_res_dec_fg = nn.Sequential(*model_res_dec_fg)
+        self.model_al_out = nn.Sequential(*model_dec_al)
+
+        self.model_dec_fg1 = nn.Sequential(*model_dec_fg1)
+        self.model_fg_out = nn.Sequential(*model_dec_fg2)
+
+    def forward(self, image, back, seg):
+        img_feat1 = self.model_enc1(image)
+        img_feat = self.model_enc2(img_feat1)
+
+        back_feat = self.model_enc_back(back)
+        seg_feat = self.model_enc_seg(seg)
+
+        oth_feat = torch.cat([self.comb_back(torch.cat([img_feat, back_feat], dim=1)),
+                              self.comb_seg(torch.cat([img_feat, seg_feat], dim=1))], dim=1)
+
+        out_dec = self.model_res_dec(torch.cat([img_feat, oth_feat], dim=1))
+
+        out_dec_al = self.model_res_dec_al(out_dec)
+        al_out = self.model_al_out(out_dec_al)
+
+        # 去除fg-color预测
+        # out_dec_fg = self.model_res_dec_fg(out_dec)
+        # out_dec_fg1 = self.model_dec_fg1(out_dec_fg)
+        # fg_out = self.model_fg_out(torch.cat([out_dec_fg1, img_feat1], dim=1))
+
+        return al_out
+
+
 ############################## part ##################################
 
 
@@ -292,6 +432,18 @@ def conv_init(m):
     if classname.find('BatchNorm2d') != -1:
         init.normal(m.weight.data, 1.0, 0.2)
         init.constant(m.bias.data, 0.0)
+
+
+class f_upsample(nn.Module):
+    def __init__(self, scale_factor, mode="bilinear", align_corners=None):
+        super(f_upsample, self).__init__()
+        self.scale_factor = scale_factor
+        self.mode = mode
+        self.align_corners = align_corners
+
+    def forward(self, x):
+        x = F.interpolate(x, scale_factor=self.scale_factor, mode=self.mode, align_corners=self.align_corners)
+        return x
 
 
 class conv3x3(nn.Module):
