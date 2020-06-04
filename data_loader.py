@@ -82,6 +82,76 @@ class CompositeData(Dataset):
         return sample
 
 
+class RealDataAndAdobe(Dataset):
+    """mozi added, modify from class:VideoData"""
+
+    def __init__(self, csv_file, data_config, transform=None):
+        self.frames = pd.read_csv(csv_file, sep=';')
+        self.transform = transform
+        self.resolution = data_config['reso']
+
+    def __len__(self):
+        return len(self.frames)
+
+    def __getitem__(self, idx):
+        img = io.imread(self.frames.iloc[idx, 0])
+        back = io.imread(self.frames.iloc[idx, 1])
+        seg = io.imread(self.frames.iloc[idx, 2])
+        fg = io.imread(self.frames.iloc[idx, 3])
+        back_rnd = io.imread(self.frames.iloc[idx, 4])
+        data_type = int(self.frames.iloc[idx, 5])
+
+        # print('debug', self.frames.iloc[idx, 2])
+        if seg.max() <= 1.1:
+            seg = seg * 255
+
+        sz = self.resolution
+
+        if np.random.random_sample() > 0.5:
+            img = cv2.flip(img, 1)
+            seg = cv2.flip(seg, 1)
+            back = cv2.flip(back, 1)
+            fg = cv2.flip(fg, 1)
+            back_rnd = cv2.flip(back_rnd, 1)
+
+        # allow random cropping centered on the segmentation map
+        try:
+            bbox = create_bbox(seg, seg.shape[0], seg.shape[1])
+        except:
+            print("warning:can't create bbox. ", self.frames.iloc[idx, 2])
+            bbox = [0, 0, seg.shape[0], seg.shape[1]]
+        if back_rnd.shape[0] <= bbox[0] or back_rnd.shape[1] <= bbox[1]:
+            # mozi added，防止back_rnd太小，crop出空。
+            back_rnd = cv2.resize(back_rnd, (img.shape[1], img.shape[0]))
+            # print('debug resized', back_rnd.shape, bbox)
+        img = apply_crop(img, bbox, self.resolution)
+        seg = apply_crop(seg, bbox, self.resolution)
+        back = apply_crop(back, bbox, self.resolution)
+        # print('debug', back_rnd.shape, bbox)
+        fg = apply_crop(fg, bbox, self.resolution)
+        back_rnd = apply_crop(back_rnd, bbox, self.resolution)
+
+        # convert seg to guidance map
+        # segg=create_seg_guide(seg,self.resolution)
+
+        # Perturb Background: random noise addition or gamma change
+        if np.random.random_sample() > 0.6:
+            sigma = np.random.randint(low=2, high=6)
+            mu = np.random.randint(low=0, high=14) - 7
+            back_tr = add_noise(back, mu, sigma)
+        else:
+            back_tr = skimage.exposure.adjust_gamma(back, np.random.normal(1, 0.12))
+
+        sample = {'image': to_tensor(img),
+                  'seg': to_tensor(create_seg_guide4rgbd(seg, self.resolution)),
+                  'bg': to_tensor(back), 'seg-gt': to_tensor(seg), 'fg': to_tensor(fg), 'back-rnd': to_tensor(back_rnd),
+                  'back_tr': to_tensor(back_tr), 'data_type': data_type}
+
+        if self.transform:
+            sample = self.transform(sample)
+        return sample
+
+
 class RealDataWoMotion(Dataset):
     """mozi added, modify from class:VideoData"""
 
@@ -130,7 +200,11 @@ class RealDataWoMotion(Dataset):
         # multi_fr[..., 3] = fr4;
 
         # allow random cropping centered on the segmentation map
-        bbox = create_bbox(seg, seg.shape[0], seg.shape[1])
+        try:
+            bbox = create_bbox(seg, seg.shape[0], seg.shape[1])
+        except:
+            print("warning:can't create bbox. ", self.frames.iloc[idx, 2])
+            bbox = [0, 0, seg.shape[0], seg.shape[1]]
         if back_rnd.shape[0] <= bbox[0] or back_rnd.shape[1] <= bbox[1]:
             # mozi added，防止back_rnd太小，crop出空。
             back_rnd = cv2.resize(back_rnd, (img.shape[1], img.shape[0]))
@@ -500,3 +574,13 @@ def to_tensor(pic):
     # backward compatibility
 
     return 2 * (img.float().div(255)) - 1
+
+
+def select_datatype(adobe_data, real_data, datatype):
+    bg_res = torch.ones_like(real_data)
+    for i in range(real_data.shape[0]):
+        if datatype[i] == 1:
+            bg_res[i, ...] = adobe_data[i, ...]
+        else:
+            bg_res[i, ...] = real_data[i, ...]
+    return bg_res

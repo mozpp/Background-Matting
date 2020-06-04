@@ -11,7 +11,7 @@ from torch.autograd import Variable
 import torch.backends.cudnn as cudnn
 
 from functions import *
-from networks import ResnetConditionHR_mo, ResnetConditionHR, ResnetConditionHR_mo_4convert
+from networks import ResnetConditionHR_mo, ResnetConditionHR, ResnetConditionHR_mo_4convert, UnetBased_mo
 
 torch.set_num_threads(1)
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
@@ -29,6 +29,9 @@ parser.add_argument('-b', '--back', type=str, default=None,
                     help='Captured background image. (only use for inference on videos with fixed camera')
 
 args = parser.parse_args()
+
+fg_color_pred = True
+debug = True
 
 # input data path
 data_path = args.input_dir
@@ -56,10 +59,11 @@ else:
 #     epoch_idx_max = epoch_idx if epoch_idx >= epoch_idx_max else epoch_idx_max
 # model_name1 = os.path.join(model_main_dir, 'netG_epoch_{}.pth'.format(epoch_idx_max))
 model_name1 = args.trained_model
-# netM = ResnetConditionHR_mo(input_nc=(3, 3, 1, 4), output_nc=4, n_blocks1=7, n_blocks2=3)
-netM = ResnetConditionHR_mo_4convert(input_nc=(3, 3, 1, 4), output_nc=4, n_blocks1=3, n_blocks2=1)
+# netM = UnetBased_mo(input_nc=(3, 3, 1, 4), output_nc=4, n_blocks1=3, n_blocks2=1)
+# netM = ResnetConditionHR_mo(input_nc=(3, 3, 1, 4), output_nc=4, n_blocks1=3, n_blocks2=1)
+netM = ResnetConditionHR(input_nc=(3, 3, 1, 4), output_nc=4, n_blocks1=3, n_blocks2=1)
 netM = nn.DataParallel(netM)
-# netM.load_state_dict(torch.load(model_name1))
+netM.load_state_dict(torch.load(model_name1))
 netM.cuda();
 netM.eval()
 cudnn.benchmark = True
@@ -212,19 +216,21 @@ for i in range(0, len(test_imgs)):
         img, bg, rcnn_al, multi_fr = Variable(img.cuda()), Variable(bg.cuda()), Variable(rcnn_al.cuda()), Variable(
             multi_fr.cuda())
         input_im = torch.cat([img, bg, rcnn_al, multi_fr], dim=1)
-        if i==0:
-            torch.onnx.export(netM.module, (img, bg, rcnn_al),'./model_lw1.onnx', opset_version=9)
+        # if i == 0:
+        #     from thop import profile
+        #     flops, params = profile(netM.module, inputs=(img, bg, rcnn_al))
+        #     print("%.2fG" % (flops / 1e9), "%.2fM" % (params / 1e6))
+        #     torch.onnx.export(netM.module, (img, bg, rcnn_al),'./model_UnetBased.onnx', opset_version=9)
         torch.cuda.synchronize()
         time_bf_infer = time.time()
-        alpha_pred, fg_pred = netM(img, bg, rcnn_al)
+        place_holder = bg
+        if fg_color_pred:
+            alpha_pred, fg_pred = netM(img, bg, rcnn_al, place_holder)
+        else:
+            alpha_pred = netM(img, bg, rcnn_al, place_holder)
         torch.cuda.synchronize()
         time_aft_infer = time.time()
         print('infer time:', time_aft_infer - time_bf_infer)
-        # if i==0:
-        #     from thop import profile
-        #     flops, params = profile(netM.module, inputs=(img, bg, rcnn_al, multi_fr))
-        #     print("%.2fG" % (flops/1e9), "%.2fM" % (params/1e6))
-        #     torch.onnx.export(netM.module, (img, bg, rcnn_al, multi_fr),'./model.onnx', opset_version=11)
 
         al_mask = (alpha_pred > 0.95).type(torch.cuda.FloatTensor)
 
@@ -248,20 +254,30 @@ for i in range(0, len(test_imgs)):
 
         # alpha_out = modify_alpha(alpha_out, soft_seg=soft_seg)
 
-        fg_out = to_image(fg_pred[0, ...]);
-        # fg_out = fg_out * np.expand_dims((alpha_out.astype(float) / 255 > 0.01).astype(float), axis=2);
-        fg_out = (255 * fg_out).astype(np.uint8)
+        if fg_color_pred:
+            fg_out = to_image(fg_pred[0, ...]);
+            # fg_out = fg_out * np.expand_dims((alpha_out.astype(float) / 255 > 0.01).astype(float), axis=2);
+            fg_out = (255 * fg_out).astype(np.uint8)
 
         # Uncrop
         R0 = bgr_img0.shape[0];
         C0 = bgr_img0.shape[1]
         alpha_out0 = uncrop(alpha_out, bbox, R0, C0)
-        fg_out0 = uncrop(fg_out, bbox, R0, C0)
+        if fg_color_pred:
+            fg_out0 = uncrop(fg_out, bbox, R0, C0)
 
+    if debug:
+        # alpha_out0[alpha_out0<125] = alpha_out0[alpha_out0<125]/2
+        alpha_out_fp = alpha_out0 > 255*0.95
+        fg_out1 = fg_out0 * (1 - alpha_out_fp[..., np.newaxis])*(alpha_out0[..., np.newaxis].astype(float)/255)
+        fg_out1 = fg_out1.astype(np.uint8)
     # compose
-    alpha_out_fp=alpha_out0.astype(float)/255
-    fg_out0=rgb_img*alpha_out_fp[..., np.newaxis]+fg_out0*(1-alpha_out_fp[..., np.newaxis])
-    # fg_out0 = rgb_img
+    if fg_color_pred:
+        # alpha_out_fp = alpha_out0.astype(float) / 255
+        alpha_out_fp = alpha_out0 > 255*0.95
+        fg_out0 = rgb_img * alpha_out_fp[..., np.newaxis] + fg_out0 * (1 - alpha_out_fp[..., np.newaxis])
+    else:
+        fg_out0 = rgb_img
 
     back_img10 = cv2.resize(back_img10, (C0, R0));
     back_img20 = cv2.resize(back_img20, (C0, R0))
@@ -271,7 +287,7 @@ for i in range(0, len(test_imgs)):
     time6 = time.time()
 
     cv2.imwrite(result_path + '/' + filename.replace('_img', '_out'), alpha_out0)
-    # cv2.imwrite(result_path + '/' + filename.replace('_img', '_fg'), cv2.cvtColor(fg_out0, cv2.COLOR_BGR2RGB))
+    cv2.imwrite(result_path + '/' + filename.replace('_img', '_fg'), cv2.cvtColor(fg_out1, cv2.COLOR_BGR2RGB))
     cv2.imwrite(result_path + '/' + filename.replace('_img', '_compose'), cv2.cvtColor(comp_im_tr1, cv2.COLOR_BGR2RGB))
     # cv2.imwrite(result_path + '/' + filename.replace('_img', '_matte').format(i),
     #             cv2.cvtColor(comp_im_tr2, cv2.COLOR_BGR2RGB))

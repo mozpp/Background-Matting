@@ -30,14 +30,17 @@ def compose_image_withshift(alpha_pred,fg_pred,bg,seg):
             rand_max = max(-(y1-10)+1,al_tmp.shape[1]-y2-10)
             n=np.random.randint(-(y1-10), rand_max)
             #n positive indicates shift to right
-            alpha_pred_sh=torch.cat((alpha_pred[t,:,:,-n:],alpha_pred[t,:,:,:-n]),dim=2)
-            fg_pred_sh=torch.cat((fg_pred[t,:,:,-n:],fg_pred[t,:,:,:-n]),dim=2)
+            # alpha_pred_sh=torch.cat((alpha_pred[t,:,:,-n:],alpha_pred[t,:,:,:-n]),dim=2)
+            # fg_pred_sh=torch.cat((fg_pred[t,:,:,-n:],fg_pred[t,:,:,:-n]),dim=2)
 
-            alpha_pred_sh=(alpha_pred_sh+1)/2
+            # 2020-06-04:ganloss实际没多大用，而ganloss用的是这里生成的，所以这里原来的做法不可信。
+            alpha_pred_sh=(alpha_pred[t, ...]+1)/2
+            fg_pred_sh = fg_pred[t, ...]
 
             image_sh[t,...]=fg_pred_sh*alpha_pred_sh + (1-alpha_pred_sh)*bg[t,...]
 
-    return torch.autograd.Variable(image_sh.cuda())
+    # return torch.autograd.Variable(image_sh.cuda())
+    return image_sh  # 验证issue51是不是真的。
 
 def get_bbox(mask,R,C):
     where = np.array(np.where(mask))

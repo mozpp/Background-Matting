@@ -104,6 +104,8 @@ def cal_plane_func(depth_bg, roi_max):
         fy = h / (2 * np.tan(0.5 * np.pi * 59 / 180))
 
     depth_bg[roi_max < depth_bg] = 0
+    # cv2.imshow('',depth_bg*255)
+    # cv2.waitKey()
     gridyy, gridxx = np.mgrid[:h, :w]
 
     xx_cam = (gridxx - ox) / fx * depth_bg
@@ -114,9 +116,9 @@ def cal_plane_func(depth_bg, roi_max):
     bg_xyz_resh_all = np.reshape(bg_xyz, (-1, 3))
     bg_xyz_resh = bg_xyz_resh_all[bg_xyz_resh_all[:, 2] > 0]
 
-    n = 100
-    max_iterations = 100
-    goal_inliers = n * 0.3
+    # n = 100
+    max_iterations = 300
+    goal_inliers = bg_xyz_resh.shape[0] * 0.4
     # RANSAC
     m, _ = run_ransac(bg_xyz_resh, estimate, lambda x, y: is_inlier(x, y, 0.01), 3, goal_inliers, max_iterations)
     a, b, c, d = m
@@ -130,7 +132,7 @@ def depth_mask(color_path, depth_path, cut_ground=False, bg_depth_path='', save_
     depth_bg = cv2.imread(bg_depth_path, -1)
     bg_depth_h, bg_depth_w = depth_bg.shape
     bg_depth_roi = depth_bg[bg_depth_h // 3:bg_depth_h * 2 // 3, bg_depth_w // 3:bg_depth_w * 2 // 3]
-    roi_max = bg_depth_roi.mean()-300
+    roi_max = bg_depth_roi.mean()-500
     roi_min = 650
 
     if cut_ground:
@@ -151,7 +153,7 @@ def depth_mask(color_path, depth_path, cut_ground=False, bg_depth_path='', save_
             xx_cam = (gridxx - ox) / fx * depth_img
             yy_cam = (gridyy - oy) / fy * depth_img
             dis = abs(a * xx_cam + b * yy_cam + c * depth_img + d) / ((a ** 2 + b ** 2 + c ** 2) ** 0.5)
-            mask[dis < 30] = 0
+            mask[dis < 35] = 0
 
         # cv2.imshow('',mask)
         # cv2.waitKey()
@@ -302,17 +304,17 @@ if __name__ == '__main__':
     '''vis model'''
     # vismodel()
     '''预处理raw'''
-    path1 = '/media/mozi/library1/dataset/result/background-matting-result/0528/12astra/input'
-    path2 = '/media/mozi/library1/download/data/yunlong-0527/12astra/depth'
-    bg_depth_path='/media/mozi/library1/download/data/yunlong-0527/12astra/depth/depth_006925.png'
-    rename_img_wtimestamp(path1, path2)
-    depth_mask(path1, path2, bg_depth_path=bg_depth_path, save_bg=True)
+    # path1 = '/media/mozi/library1/dataset/result/background-matting-result/0528/12astra/input'
+    # path2 = '/media/mozi/library1/download/data/yunlong-0527/12astra/depth'
+    # bg_depth_path='/media/mozi/library1/download/data/yunlong-0527/12astra/depth/depth_006925.png'
+    # rename_img_wtimestamp(path1, path2)
+    # depth_mask(path1, path2, bg_depth_path=bg_depth_path, save_bg=True)
     '''ransac去除地面'''
-    # path1 = '/media/mozi/library1/dataset/result/background-matting-result/0508/1-all/input'
-    # path2 = '/media/mozi/Elements SE/orbbec/dataset/rgbd-capture/0508/0508-1/depth/'
-    # bg_depth_path='/media/mozi/library1/dataset/result/background-matting-result/0508/1-all/bg_depth.png'
+    path1 = '/media/mozi/library1/download/bg-matting/0514/1-all/input'
+    path2 = '/media/mozi/Elements SE/orbbec/dataset/rgbd-capture/0514/1/depth'
+    bg_depth_path='/media/mozi/library1/download/bg-matting/0514/1-all/bg_depth.png'
     # rename_img(path1)
-    # depth_mask(path1, path2, cut_ground=True, bg_depth_path=bg_depth_path, save_bg=True)
+    depth_mask(path1, path2, cut_ground=True, bg_depth_path=bg_depth_path, save_bg=False)
     '''0529，另一版算前景软分割的方法。背景差值，而不是两刀切。感觉不太可行，因为深度图噪声多'''
     # path1 = '/media/mozi/library1/dataset/result/background-matting-result/0528/10/input'
     # path2 = '/media/mozi/library1/download/data/yunlong-0527/10/depth'

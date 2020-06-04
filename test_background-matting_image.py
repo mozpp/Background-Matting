@@ -32,7 +32,7 @@ parser.add_argument('-b', '--back', type=str, default=None,
 args = parser.parse_args()
 
 '''是否开启基于初始背景深度，切分alpha'''
-bg_mask_mode_on = False
+bg_mask_mode_on = 0
 
 # input model
 model_main_dir = 'Models/' + args.trained_model + '/';
@@ -69,6 +69,7 @@ netM.eval()
 cudnn.benchmark = True
 # reso = (512, 512)  # input reoslution to the network
 reso = (480, 480)  # input reoslution to the network
+# reso = (288, 288)
 
 # load captured background for video mode, fixed camera
 if args.back is not None:
@@ -118,9 +119,10 @@ def modify_alpha(alpha_out0, bg_mask=None, data_path=None, filename=None, roi=72
     # alpha_out0 = depth_mask/2+alpha_out0/2
 
     if bg_mask is not None:
-        print('sub background')
+        print('\033[1;35m sub background \033[0m')
         depth_bg_mask = 255 - bg_mask
         depth_bg_mask = cv2.dilate(depth_bg_mask, kernel, iterations=2)
+        depth_bg_mask = cv2.GaussianBlur(depth_bg_mask, (7, 7), 2)
         alpha_out0 = alpha_out0 * (depth_bg_mask / 255)
 
     return alpha_out0
